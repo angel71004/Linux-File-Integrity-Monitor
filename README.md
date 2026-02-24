@@ -55,3 +55,11 @@ The tool supports both **manual execution** and **automated monitoring via cron*
 ---
 
 ## 📂 Project Structure
+```
+Linux-File-Integrity-Monitor/
+│
+├── fim.sh
+├── .gitignore
+├── README.md
+└── screenshot.png
+```
