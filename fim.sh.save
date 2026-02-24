@@ -1,0 +1,148 @@
+#!/bin/bash
+
+# =====================================================
+# Linux File Integrity Monitoring System (Optimized)
+# Author: Angel A
+# Description:
+# Detects unauthorized file changes using SHA256 hashing
+# =====================================================
+
+# -------- Colors --------
+RED="\e[31m"
+GREEN="\e[32m"
+YELLOW="\e[33m"
+BLUE="\e[34m"
+RESET="\e[0m"
+
+BASELINE_FILE="baseline.db"
+REPORT_DIR="reports"
+TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
+REPORT_FILE="$REPORT_DIR/report_$TIMESTAMP.txt"
+
+mkdir -p $REPORT_DIR
+
+# -------- Target Monitoring Paths --------
+MONITOR_PATHS=(
+    "/etc/passwd"
+    "/etc/shadow"
+    "/etc/ssh"
+    "/etc/sudoers"
+)
+
+# -------- Exclusion Paths --------
+EXCLUDE_PATHS=(
+    "/etc/ssl"
+    "/etc/alternatives"
+)
+
+# =====================================================
+# Initialize Baseline
+# =====================================================
+initialize_baseline() {
+
+    echo -e "${BLUE}[*] Initializing baseline...${RESET}"
+    > "$BASELINE_FILE"
+
+    for path in "${MONITOR_PATHS[@]}"; do
+
+        if [ -d "$path" ]; then
+            find "$path" -maxdepth 2 -type f 2>/dev/null \
+            | grep -v -E "$(IFS=\|; echo "${EXCLUDE_PATHS[*]}")" \
+            | while read file; do
+                sha256sum "$file" >> "$BASELINE_FILE"
+            done
+
+        elif [ -f "$path" ]; then
+            sha256sum "$path" >> "$BASELINE_FILE"
+        fi
+
+    done
+
+    echo -e "${GREEN}[+] Baseline created successfully.${RESET}"
+}
+
+# =====================================================
+# Check Integrity
+# =====================================================
+check_integrity() {
+
+    if [ ! -f "$BASELINE_FILE" ]; then
+        echo -e "${RED}[!] Baseline not found. Initialize first.${RESET}"
+        exit 1
+    fi
+
+    echo -e "${BLUE}[*] Checking file integrity...${RESET}"
+    echo "Integrity Check - $(date)" >> "$REPORT_FILE"
+
+    modified=0
+    unchanged=0
+    missing=0
+    newfiles=0
+
+    declare -A baseline_hashes
+
+    # Load baseline into memory
+    while read -r line; do
+        hash=$(echo "$line" | awk '{print $1}')
+        file=$(echo "$line" | awk '{print $2}')
+        baseline_hashes["$file"]="$hash"
+    done < "$BASELINE_FILE"
+
+    # Check baseline files
+    for file in "${!baseline_hashes[@]}"; do
+        if [ -f "$file" ]; then
+            current_hash=$(sha256sum "$file" | awk '{print $1}')
+
+            if [ "${baseline_hashes[$file]}" != "$current_hash" ]; then
+                echo -e "${RED}[ALERT] Modified: $file${RESET}"
+                echo "[ALERT] Modified: $file" >> "$REPORT_FILE"
+                ((modified++))
+            else
+                ((unchanged++))
+            fi
+        else
+            echo -e "${YELLOW}[WARNING] Missing: $file${RESET}"
+            echo "[WARNING] Missing: $file" >> "$REPORT_FILE"
+            ((missing++))
+        fi
+    done
+
+    # Detect new files
+    for path in "${MONITOR_PATHS[@]}"; do
+
+        if [ -d "$path" ]; then
+            find "$path" -maxdepth 2 -type f 2>/dev/null \
+            | grep -v -E "$(IFS=\|; echo "${EXCLUDE_PATHS[*]}")" \
+            | while read file; do
+
+                if [ -z "${baseline_hashes[$file]}" ]; then
+                    echo -e "${RED}[NEW FILE] $file${RESET}"
+                    echo "[NEW FILE] $file" >> "$REPORT_FILE"
+                    ((newfiles++))
+                fi
+
+            done
+        fi
+
+    done
+
+    echo ""
+    echo -e "${BLUE}========== Summary ==========${RESET}"
+    echo -e "${GREEN}Unchanged Files: $unchanged${RESET}"
+    echo -e "${RED}Modified Files: $modified${RESET}"
+    echo -e "${YELLOW}Missing Files: $missing${RESET}"
+    echo -e "${RED}New Files: $newfiles${RESET}"
+    echo -e "${BLUE}=============================${RESET}"
+
+    echo "Summary: Unchanged=$unchanged Modified=$modified Missing=$missing New=$newfiles" >> "$REPORT_FILE"
+}
+
+# =====================================================
+# Update Baseline
+# =====================================================
+update_baseline() {
+    echo -e "${YELLOW}[*] Updating baseline...${RESET}"
+    initialize_baseline
+}
+
+V
